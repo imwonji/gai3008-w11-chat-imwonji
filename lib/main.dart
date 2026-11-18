@@ -1,9 +1,17 @@
 import 'package:flutter/material.dart';
 
+import 'ai_client.dart';
+
+/// flutter run --dart-define=USE_PROXY=true 로 실제 프록시(8787)에 붙는다.
+const _useProxy = bool.fromEnvironment('USE_PROXY');
+
 void main() => runApp(const ChatLabApp());
 
 class ChatLabApp extends StatelessWidget {
-  const ChatLabApp({super.key});
+  const ChatLabApp({super.key, this.client});
+
+  /// 테스트에서 가짜 클라이언트를 넣을 수 있게 열어 둔다.
+  final AiClient? client;
 
   @override
   Widget build(BuildContext context) {
@@ -14,7 +22,7 @@ class ChatLabApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2F6FE4)),
         useMaterial3: true,
       ),
-      home: const ChatPage(),
+      home: ChatPage(client: client),
     );
   }
 }
@@ -28,7 +36,9 @@ class ChatMessage {
 }
 
 class ChatPage extends StatefulWidget {
-  const ChatPage({super.key});
+  const ChatPage({super.key, this.client});
+
+  final AiClient? client;
 
   @override
   State<ChatPage> createState() => _ChatPageState();
@@ -46,17 +56,40 @@ class _ChatPageState extends State<ChatPage> {
 
   final _controller = TextEditingController();
 
+  late final AiClient _ai =
+      widget.client ?? (_useProxy ? ProxyAiClient() : MockAiClient());
+
+  /// sending: 전송 중(입력 잠금) · typing: 응답 대기(점 3개)
+  bool _sending = false;
+  bool _typing = false;
+
   @override
   void dispose() {
     _controller.dispose();
     super.dispose();
   }
 
-  void _send() {
+  Future<void> _send() async {
     final text = _controller.text.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty || _sending) return; // 연타해도 한 번만
     _controller.clear();
-    setState(() => _messages.add(ChatMessage(text: text, isUser: true)));
+    setState(() {
+      _messages.add(ChatMessage(text: text, isUser: true));
+      _sending = true;
+      _typing = true;
+    });
+    try {
+      final answer = await _ai.chat(text);
+      if (!mounted) return;
+      setState(() => _messages.add(ChatMessage(text: answer, isUser: false)));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _sending = false;
+          _typing = false;
+        });
+      }
+    }
   }
 
   @override
@@ -67,10 +100,25 @@ class _ChatPageState extends State<ChatPage> {
       appBar: AppBar(
         title: const Text('AI Chat — 실습 1'),
         actions: [
+          if (_ai case final MockAiClient mock)
+            PopupMenuButton<MockMode>(
+              tooltip: '응답 모드 (MOCK)',
+              icon: const Icon(Icons.science_outlined),
+              initialValue: mock.mode,
+              onSelected: (m) => setState(() => mock.mode = m),
+              itemBuilder: (_) => [
+                for (final m in MockMode.values)
+                  CheckedPopupMenuItem(
+                    value: m,
+                    checked: m == mock.mode,
+                    child: Text(m.label),
+                  ),
+              ],
+            ),
           IconButton(
             tooltip: '대화 지우기',
             icon: const Icon(Icons.delete_sweep_outlined),
-            onPressed: _messages.isEmpty
+            onPressed: _messages.isEmpty || _sending
                 ? null
                 : () => setState(() => _messages.clear()),
           ),
@@ -102,7 +150,12 @@ class _ChatPageState extends State<ChatPage> {
             ),
 
             // ✅ 할 일 3 — 입력창. SafeArea 안 Column 맨 아래라 홈 인디케이터를 피한다.
-            _InputBar(controller: _controller, onSend: _send),
+            if (_typing) const _TypingBubble(),
+            _InputBar(
+              controller: _controller,
+              onSend: _send,
+              enabled: !_sending,
+            ),
           ],
         ),
       ),
@@ -147,6 +200,81 @@ class _Bubble extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// typing 상태 — AI 쪽(왼쪽)에 점 3개가 든 말풍선.
+class _TypingBubble extends StatelessWidget {
+  const _TypingBubble();
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Semantics(
+          label: 'AI가 답을 쓰는 중',
+          child: const TypingDots(),
+        ),
+      ),
+    );
+  }
+}
+
+/// 점 3개가 순서대로 켜진다 (점 하나당 200ms, 한 바퀴 600ms).
+class TypingDots extends StatefulWidget {
+  const TypingDots({super.key});
+
+  @override
+  State<TypingDots> createState() => _TypingDotsState();
+}
+
+class _TypingDotsState extends State<TypingDots>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 600),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.onSurfaceVariant;
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (_, _) {
+        final t = (_c.value * 3).floor() % 3;
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var i = 0; i < 3; i++)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                child: Opacity(
+                  opacity: i <= t ? 1 : 0.25,
+                  child: Container(
+                    width: 8,
+                    height: 8,
+                    decoration:
+                        BoxDecoration(color: color, shape: BoxShape.circle),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 }

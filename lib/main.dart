@@ -123,6 +123,21 @@ class _ChatPageState extends State<ChatPage> {
     await _request(text);
   }
 
+  /// 429 지수 백오프 — 1s → 2s 기다리며 두 번 더 시도하고, 그래도 429면 오류.
+  static const backoff = [Duration(seconds: 1), Duration(seconds: 2)];
+
+  Future<String> _chatWithBackoff(String text) async {
+    for (var attempt = 0; ; attempt++) {
+      try {
+        return await _ai.chat(text);
+      } on AiException catch (e) {
+        if (e.status != 429 || attempt >= backoff.length) rethrow;
+        await Future<void>.delayed(backoff[attempt]);
+        if (!mounted) rethrow;
+      }
+    }
+  }
+
   Future<void> _request(String text) async {
     setState(() {
       _lastPrompt = text;
@@ -131,7 +146,7 @@ class _ChatPageState extends State<ChatPage> {
       _typing = true;
     });
     try {
-      final answer = await _ai.chat(text);
+      final answer = await _chatWithBackoff(text);
       if (!mounted) return;
       setState(() => _messages.add(ChatMessage(text: answer, isUser: false)));
       _toBottom();
@@ -220,10 +235,7 @@ class _ChatPageState extends State<ChatPage> {
                   : const Duration(milliseconds: 200),
               transitionBuilder: (child, animation) => FadeTransition(
                 opacity: animation,
-                child: SizeTransition(
-                  sizeFactor: animation,
-                  child: child,
-                ),
+                child: SizeTransition(sizeFactor: animation, child: child),
               ),
               child: switch ((_typing, _error)) {
                 (true, _) => const _TypingBubble(key: ValueKey('typing')),

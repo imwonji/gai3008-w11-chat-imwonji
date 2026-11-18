@@ -109,4 +109,37 @@ void main() {
     await tester.pump();
     expect(find.textContaining('“안녕”에 대한 답'), findsOneWidget);
   });
+
+  testWidgets('429면 1s → 2s 백오프 후 다시 시도해 성공한다', (tester) async {
+    final client = await _pumpApp(tester, mode: MockMode.flaky429);
+    await _sendText(tester, '혼잡');
+
+    await tester.pump(_latency); // 1차 429
+    expect(client.calls, 1);
+    await tester.pump(const Duration(seconds: 1)); // 1s 대기 → 2차
+    expect(client.calls, 2);
+    await tester.pump(_latency); // 2차 429
+    await tester.pump(const Duration(seconds: 2)); // 2s 대기 → 3차
+    expect(client.calls, 3);
+    await tester.pump(_latency); // 3차 성공
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('“혼잡”에 대한 답'), findsOneWidget);
+    expect(find.textContaining('잠시 후'), findsNothing);
+  });
+
+  testWidgets('429가 계속되면 백오프 뒤 "잠시 후" 오류', (tester) async {
+    final client = await _pumpApp(tester, mode: MockMode.rateLimited);
+    await _sendText(tester, '혼잡');
+
+    await tester.pump(_latency);
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(_latency);
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump(_latency);
+    await tester.pumpAndSettle();
+
+    expect(client.calls, 3);
+    expect(find.textContaining('잠시 후'), findsOneWidget);
+  });
 }

@@ -6,8 +6,10 @@ import 'package:lab1_chat_ui/main.dart';
 
 const _latency = Duration(milliseconds: 100);
 
-Future<MockAiClient> _pumpApp(WidgetTester tester,
-    {MockMode mode = MockMode.ok}) async {
+Future<MockAiClient> _pumpApp(
+  WidgetTester tester, {
+  MockMode mode = MockMode.ok,
+}) async {
   final client = MockAiClient(mode: mode, latency: _latency);
   await tester.pumpWidget(ChatLabApp(client: client));
   return client;
@@ -51,5 +53,37 @@ void main() {
     await tester.pump();
 
     expect(find.text('무엇이든 물어보세요'), findsOneWidget);
+  });
+
+  testWidgets('오류 문구가 남고, 다시 시도하면 답이 온다', (tester) async {
+    final client = await _pumpApp(tester, mode: MockMode.serverError);
+    await _sendText(tester, '질문');
+    await tester.pump(_latency);
+    await tester.pumpAndSettle();
+
+    expect(find.text('⚠️ 응답을 받지 못했습니다'), findsOneWidget);
+    // 오류 뒤에도 입력이 된다
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.enabled, isTrue);
+
+    client.mode = MockMode.ok;
+    await tester.tap(find.text('다시 시도'));
+    await tester.pump();
+    await tester.pump(_latency);
+    await tester.pumpAndSettle();
+
+    expect(find.text('⚠️ 응답을 받지 못했습니다'), findsNothing);
+    expect(find.textContaining('“질문”에 대한 답'), findsOneWidget);
+    expect(find.text('질문'), findsOneWidget); // 내 말풍선은 한 번만
+  });
+
+  test('상태 코드별 오류 문구', () {
+    expect(errorMessageFor(const AiException(401)), contains('키/권한'));
+    expect(errorMessageFor(const AiException(429)), contains('잠시 후'));
+    expect(errorMessageFor(const AiException(500)), contains('응답을 받지 못했습니다'));
+    expect(
+      errorMessageFor(const AiException(null, 'timeout')),
+      contains('네트워크'),
+    );
   });
 }

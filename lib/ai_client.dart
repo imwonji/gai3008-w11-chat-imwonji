@@ -29,7 +29,7 @@ abstract class AiClient {
 /// 웹/데스크톱은 localhost:8787, Android 에뮬레이터는 10.0.2.2:8787.
 class ProxyAiClient implements AiClient {
   ProxyAiClient({this.baseUrl = 'http://localhost:8787', http.Client? client})
-      : _http = client ?? http.Client();
+    : _http = client ?? http.Client();
 
   final String baseUrl;
   final http.Client _http;
@@ -118,6 +118,7 @@ class MockAiClient implements AiClient {
     }
   }
 
-  String _reply(String message) => '“$message”에 대한 답입니다. '
+  String _reply(String message) =>
+      '“$message”에 대한 답입니다. '
       '(MOCK 응답 — 프록시를 켜면 실제 AI가 답합니다)';
 }

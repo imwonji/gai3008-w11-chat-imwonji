@@ -35,6 +35,9 @@ class ChatMessage {
   final bool isUser;
 }
 
+/// 오류 → 화면 문구 (테스트에서도 쓴다).
+String errorMessageFor(Object e) => _ChatPageState.errorMessage(e);
+
 class ChatPage extends StatefulWidget {
   const ChatPage({super.key, this.client});
 
@@ -50,8 +53,7 @@ class _ChatPageState extends State<ChatPage> {
     const ChatMessage(text: '오늘 뭐 배워?', isUser: true),
     const ChatMessage(text: 'AI 챗봇에 움직이는 응답을 붙입니다.', isUser: false),
     const ChatMessage(text: '타이핑 점은 왜 필요해요?', isUser: true),
-    const ChatMessage(
-        text: '응답이 1초를 넘으면 앱이 멈춘 것처럼 보이기 때문입니다.', isUser: false),
+    const ChatMessage(text: '응답이 1초를 넘으면 앱이 멈춘 것처럼 보이기 때문입니다.', isUser: false),
   ];
 
   final _controller = TextEditingController();
@@ -63,18 +65,49 @@ class _ChatPageState extends State<ChatPage> {
   bool _sending = false;
   bool _typing = false;
 
+  /// error: 마지막 요청이 실패했을 때의 문구. null이면 오류 없음.
+  String? _error;
+
+  /// 재시도는 마지막 사용자 메시지를 다시 보낸다.
+  String? _lastPrompt;
+
   @override
   void dispose() {
     _controller.dispose();
     super.dispose();
   }
 
+  /// 401 · 429 · 500 · timeout을 하나의 error 상태(문구)로 모은다.
+  static String errorMessage(Object e) {
+    if (e is! AiException) return '⚠️ 응답을 받지 못했습니다';
+    if (e.isTimeout) return '⏱️ 응답이 30초 넘게 없습니다. 네트워크를 확인해 주세요';
+    return switch (e.status) {
+      401 => '🔑 키/권한을 확인해 주세요',
+      429 => '⏳ 요청이 많습니다. 잠시 후 다시 시도해 주세요',
+      500 => '⚠️ 응답을 받지 못했습니다',
+      _ => '📡 네트워크를 확인해 주세요',
+    };
+  }
+
   Future<void> _send() async {
     final text = _controller.text.trim();
     if (text.isEmpty || _sending) return; // 연타해도 한 번만
     _controller.clear();
+    setState(() => _messages.add(ChatMessage(text: text, isUser: true)));
+    await _request(text);
+  }
+
+  /// 오류 말풍선의 '다시 시도' — 내 말풍선은 그대로 두고 요청만 다시.
+  Future<void> _retry() async {
+    final text = _lastPrompt;
+    if (text == null || _sending) return;
+    await _request(text);
+  }
+
+  Future<void> _request(String text) async {
     setState(() {
-      _messages.add(ChatMessage(text: text, isUser: true));
+      _lastPrompt = text;
+      _error = null;
       _sending = true;
       _typing = true;
     });
@@ -82,7 +115,11 @@ class _ChatPageState extends State<ChatPage> {
       final answer = await _ai.chat(text);
       if (!mounted) return;
       setState(() => _messages.add(ChatMessage(text: answer, isUser: false)));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = errorMessage(e));
     } finally {
+      // 오류 뒤에도 입력이 되도록 잠금은 항상 푼다.
       if (mounted) {
         setState(() {
           _sending = false;
@@ -120,7 +157,10 @@ class _ChatPageState extends State<ChatPage> {
             icon: const Icon(Icons.delete_sweep_outlined),
             onPressed: _messages.isEmpty || _sending
                 ? null
-                : () => setState(() => _messages.clear()),
+                : () => setState(() {
+                    _messages.clear();
+                    _error = null;
+                  }),
           ),
         ],
       ),
@@ -151,6 +191,8 @@ class _ChatPageState extends State<ChatPage> {
 
             // ✅ 할 일 3 — 입력창. SafeArea 안 Column 맨 아래라 홈 인디케이터를 피한다.
             if (_typing) const _TypingBubble(),
+            if (_error case final error?)
+              _ErrorBubble(message: error, onRetry: _retry),
             _InputBar(
               controller: _controller,
               onSend: _send,
@@ -204,6 +246,54 @@ class _Bubble extends StatelessWidget {
   }
 }
 
+/// error 상태 — 화면에 남는 오류 말풍선 + 다시 시도.
+class _ErrorBubble extends StatelessWidget {
+  const _ErrorBubble({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+        constraints: const BoxConstraints(maxWidth: 420),
+        decoration: BoxDecoration(
+          color: colorScheme.errorContainer,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Semantics(
+                liveRegion: true,
+                child: Text(
+                  message,
+                  style: TextStyle(color: colorScheme.onErrorContainer),
+                ),
+              ),
+            ),
+            const SizedBox(width: 4),
+            TextButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text('다시 시도'),
+              style: TextButton.styleFrom(
+                foregroundColor: colorScheme.onErrorContainer,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// typing 상태 — AI 쪽(왼쪽)에 점 3개가 든 말풍선.
 class _TypingBubble extends StatelessWidget {
   const _TypingBubble();
@@ -219,10 +309,7 @@ class _TypingBubble extends StatelessWidget {
           color: Theme.of(context).colorScheme.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(14),
         ),
-        child: Semantics(
-          label: 'AI가 답을 쓰는 중',
-          child: const TypingDots(),
-        ),
+        child: Semantics(label: 'AI가 답을 쓰는 중', child: const TypingDots()),
       ),
     );
   }
@@ -267,8 +354,10 @@ class _TypingDotsState extends State<TypingDots>
                   child: Container(
                     width: 8,
                     height: 8,
-                    decoration:
-                        BoxDecoration(color: color, shape: BoxShape.circle),
+                    decoration: BoxDecoration(
+                      color: color,
+                      shape: BoxShape.circle,
+                    ),
                   ),
                 ),
               ),
@@ -290,15 +379,13 @@ class _EmptyState extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.chat_bubble_outline,
-              size: 48, color: colorScheme.outline),
+          Icon(Icons.chat_bubble_outline, size: 48, color: colorScheme.outline),
           const SizedBox(height: 12),
           Text(
             '무엇이든 물어보세요',
-            style: Theme.of(context)
-                .textTheme
-                .titleMedium
-                ?.copyWith(color: colorScheme.onSurfaceVariant),
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
           ),
         ],
       ),
@@ -337,8 +424,10 @@ class _InputBar extends StatelessWidget {
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(24),
                 ),
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
               ),
             ),
           ),

@@ -71,7 +71,7 @@ enum MockMode {
   rateLimited('429 한도 초과'),
   serverError('500 서버 오류'),
   timeout('타임아웃'),
-  flaky429('429 → 재시도 시 성공');
+  flaky429('429 두 번 후 성공');
 
   const MockMode(this.label);
   final String label;

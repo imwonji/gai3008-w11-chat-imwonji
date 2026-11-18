@@ -57,6 +57,7 @@ class _ChatPageState extends State<ChatPage> {
   ];
 
   final _controller = TextEditingController();
+  final _scroll = ScrollController();
 
   late final AiClient _ai =
       widget.client ?? (_useProxy ? ProxyAiClient() : MockAiClient());
@@ -74,6 +75,7 @@ class _ChatPageState extends State<ChatPage> {
   @override
   void dispose() {
     _controller.dispose();
+    _scroll.dispose();
     super.dispose();
   }
 
@@ -89,11 +91,28 @@ class _ChatPageState extends State<ChatPage> {
     };
   }
 
+  /// 새 메시지는 보이는 곳에 — reverse:true라 맨 아래는 offset 0이다.
+  void _toBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scroll.hasClients) return;
+      if (MediaQuery.of(context).disableAnimations) {
+        _scroll.jumpTo(0);
+      } else {
+        _scroll.animateTo(
+          0,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
   Future<void> _send() async {
     final text = _controller.text.trim();
     if (text.isEmpty || _sending) return; // 연타해도 한 번만
     _controller.clear();
     setState(() => _messages.add(ChatMessage(text: text, isUser: true)));
+    _toBottom();
     await _request(text);
   }
 
@@ -115,6 +134,7 @@ class _ChatPageState extends State<ChatPage> {
       final answer = await _ai.chat(text);
       if (!mounted) return;
       setState(() => _messages.add(ChatMessage(text: answer, isUser: false)));
+      _toBottom();
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = errorMessage(e));
@@ -131,6 +151,8 @@ class _ChatPageState extends State<ChatPage> {
 
   @override
   Widget build(BuildContext context) {
+    // 접근성: OS의 '애니메이션 줄이기'가 켜지면 움직임만 끄고 정보는 그대로.
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
     return Scaffold(
       // ✅ 할 일 5 — 키보드가 올라오면 body가 줄어들어 입력창이 키보드 위에 남는다.
       resizeToAvoidBottomInset: true,
@@ -173,6 +195,7 @@ class _ChatPageState extends State<ChatPage> {
               child: Stack(
                 children: [
                   ListView.builder(
+                    controller: _scroll,
                     reverse: true,
                     // 목록을 끌어내리면 키보드가 닫힌다.
                     keyboardDismissBehavior:
@@ -190,9 +213,28 @@ class _ChatPageState extends State<ChatPage> {
             ),
 
             // ✅ 할 일 3 — 입력창. SafeArea 안 Column 맨 아래라 홈 인디케이터를 피한다.
-            if (_typing) const _TypingBubble(),
-            if (_error case final error?)
-              _ErrorBubble(message: error, onRetry: _retry),
+            // typing ↔ error ↔ 없음 전환을 AnimatedSwitcher로 (200ms, 한 번에 하나).
+            AnimatedSwitcher(
+              duration: reduceMotion
+                  ? Duration.zero
+                  : const Duration(milliseconds: 200),
+              transitionBuilder: (child, animation) => FadeTransition(
+                opacity: animation,
+                child: SizeTransition(
+                  sizeFactor: animation,
+                  child: child,
+                ),
+              ),
+              child: switch ((_typing, _error)) {
+                (true, _) => const _TypingBubble(key: ValueKey('typing')),
+                (false, final String error) => _ErrorBubble(
+                  key: ValueKey('error:$error'),
+                  message: error,
+                  onRetry: _retry,
+                ),
+                _ => const SizedBox.shrink(key: ValueKey('idle')),
+              },
+            ),
             _InputBar(
               controller: _controller,
               onSend: _send,
@@ -248,7 +290,7 @@ class _Bubble extends StatelessWidget {
 
 /// error 상태 — 화면에 남는 오류 말풍선 + 다시 시도.
 class _ErrorBubble extends StatelessWidget {
-  const _ErrorBubble({required this.message, required this.onRetry});
+  const _ErrorBubble({super.key, required this.message, required this.onRetry});
 
   final String message;
   final VoidCallback onRetry;
@@ -296,7 +338,7 @@ class _ErrorBubble extends StatelessWidget {
 
 /// typing 상태 — AI 쪽(왼쪽)에 점 3개가 든 말풍선.
 class _TypingBubble extends StatelessWidget {
-  const _TypingBubble();
+  const _TypingBubble({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -328,7 +370,18 @@ class _TypingDotsState extends State<TypingDots>
   late final AnimationController _c = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 600),
-  )..repeat();
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Reduce Motion이면 점을 멈추고 셋 다 켠 채로 보여 준다.
+    if (MediaQuery.of(context).disableAnimations) {
+      _c.stop();
+    } else if (!_c.isAnimating) {
+      _c.repeat();
+    }
+  }
 
   @override
   void dispose() {
@@ -342,7 +395,7 @@ class _TypingDotsState extends State<TypingDots>
     return AnimatedBuilder(
       animation: _c,
       builder: (_, _) {
-        final t = (_c.value * 3).floor() % 3;
+        final t = _c.isAnimating ? (_c.value * 3).floor() % 3 : 2;
         return Row(
           mainAxisSize: MainAxisSize.min,
           children: [

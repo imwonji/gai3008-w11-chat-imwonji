@@ -86,4 +86,27 @@ void main() {
       contains('네트워크'),
     );
   });
+
+  testWidgets('Reduce Motion이면 점이 멈춘 채 보인다', (tester) async {
+    tester.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(disableAnimations: true);
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+
+    await _pumpApp(tester);
+    await _sendText(tester, '안녕');
+
+    expect(find.byType(TypingDots), findsOneWidget);
+    final dots = tester.widgetList<Opacity>(
+      find.descendant(
+        of: find.byType(TypingDots),
+        matching: find.byType(Opacity),
+      ),
+    );
+    // 멈춘 상태에서도 점 3개가 모두 보인다 (정보는 유지)
+    expect(dots.map((o) => o.opacity), everyElement(1.0));
+
+    await tester.pump(_latency);
+    await tester.pump();
+    expect(find.textContaining('“안녕”에 대한 답'), findsOneWidget);
+  });
 }

@@ -21,4 +21,14 @@ void main() {
 
     expect(find.text('안녕'), findsOneWidget);
   });
+
+  testWidgets('대화를 지우면 빈 상태 문구가 보인다', (WidgetTester tester) async {
+    await tester.pumpWidget(const ChatLabApp());
+    expect(find.text('무엇이든 물어보세요'), findsNothing);
+
+    await tester.tap(find.byTooltip('대화 지우기'));
+    await tester.pump();
+
+    expect(find.text('무엇이든 물어보세요'), findsOneWidget);
+  });
 }

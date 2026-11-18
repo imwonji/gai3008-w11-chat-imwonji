@@ -65,36 +65,39 @@ class _ChatPageState extends State<ChatPage> {
       // TODO 5 — 키보드가 입력창을 가리지 않게
       // TIP: Scaffold의 resizeToAvoidBottomInset은 기본값이 true다.
       //      body를 SafeArea로 감싸 홈 인디케이터와 노치를 피한다.
-      appBar: AppBar(title: const Text('AI Chat — 실습 1')),
+      appBar: AppBar(
+        title: const Text('AI Chat — 실습 1'),
+        actions: [
+          IconButton(
+            tooltip: '대화 지우기',
+            icon: const Icon(Icons.delete_sweep_outlined),
+            onPressed: _messages.isEmpty
+                ? null
+                : () => setState(() => _messages.clear()),
+          ),
+        ],
+      ),
       body: SafeArea(
         child: Column(
           children: [
-            // ─────────────────────────────────────────────────────────
-            // ✅ 할 일 1 — 완료된 부분
-            //    ListView.builder + reverse: true
-            //    · reverse:true면 index 0이 화면 맨 아래(최신)다.
-            //    · 그래서 _messages[length - 1 - i]로 거꾸로 꺼낸다.
-            // ─────────────────────────────────────────────────────────
+            // ✅ 할 일 1 — ListView.builder + reverse: true (index 0 = 맨 아래)
+            // ✅ 할 일 4 — 빈 상태: Stack으로 목록 위에 안내문을 겹친다.
             Expanded(
-              child: ListView.builder(
-                reverse: true,
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                itemCount: _messages.length,
-                itemBuilder: (context, index) {
-                  final message =
-                      _messages[_messages.length - 1 - index];
-                  return _Bubble(message: message);
-                },
+              child: Stack(
+                children: [
+                  ListView.builder(
+                    reverse: true,
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    itemCount: _messages.length,
+                    itemBuilder: (context, index) {
+                      final message = _messages[_messages.length - 1 - index];
+                      return _Bubble(message: message);
+                    },
+                  ),
+                  if (_messages.isEmpty) const _EmptyState(),
+                ],
               ),
             ),
-
-            // ─────────────────────────────────────────────────────────
-            // TODO 4 — 빈 상태
-            // TIP: ListView를 Stack으로 감싸고, 목록이 비었을 때만
-            //      Center(child: Text('무엇이든 물어보세요'))를 위에 띄운다.
-            //      지금은 목록에 가짜 대화가 있어 빈 상태가 보이지 않는다.
-            //      _messages를 비우고 확인해 보자.
-            // ─────────────────────────────────────────────────────────
 
             // ─────────────────────────────────────────────────────────
             // TODO 3 — 입력창 (TextField + 전송 버튼)
@@ -168,6 +171,33 @@ class _Bubble extends StatelessWidget {
                 : colorScheme.onSurface,
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// 할 일 4 — 빈 상태. 무엇을 할 수 있는지 미리 알려 주는 피드포워드.
+class _EmptyState extends StatelessWidget {
+  const _EmptyState();
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.chat_bubble_outline,
+              size: 48, color: colorScheme.outline),
+          const SizedBox(height: 12),
+          Text(
+            '무엇이든 물어보세요',
+            style: Theme.of(context)
+                .textTheme
+                .titleMedium
+                ?.copyWith(color: colorScheme.onSurfaceVariant),
+          ),
+        ],
       ),
     );
   }
